@@ -1,0 +1,190 @@
+; WARNING!
+; This realization of integer arithmetics has NO brain.
+; Use your own.
+
+; WARNING: damages r10, r11
+; WARNING: carefully use r10, r11 as params
+
+NUM_LEN equ 64
+
+%macro add_64 2-3 r11
+	; Adds %2 to %1, result in %1. %3 as temp buffer
+	; WARNING: damages buffer (r11)!
+	; WARNING: use different regs in %1 and %2
+	; Algorithm:
+	; while %2 != 0:
+	;	buffer = %1 and %2
+	;	%1 = %1 xor %2
+	;	%2 = buffer shl 1
+	push %2
+
+	%%start_add:
+		test %2, %2
+		jz %%end_add
+		mov %3, %1
+		and %3, %2
+		xor %1, %2
+		mov %2, %3
+		shl %2, 1
+		jmp %%start_add
+	%%end_add:
+
+	pop %2
+%endmacro
+
+%macro negative_64 1-3 r10, r11
+	; Changes sign of number in %1
+	; WARNING: use dufferent regs in %1 and %2
+	; WARNING: damages %3 (r11) and %2 (r10) 
+	not %1
+	mov %2, 1
+	add_64 %1, %2, %3
+%endmacro
+
+%macro sub_64 2-4 r10, r11
+	; %1 = %1 - %2.
+	; WARNING: damages %4 (r11) and r10
+	; WARNING: use other regs in %1 and %2
+	; WARNING: use other register in %3, %4 if r11, r10 in %1 or %2
+	push %2
+	negative_64 %2, %3, %4
+	add_64 %1, %2, %4
+	pop %2
+%endmacro
+
+%macro mul_64 1-2 r11
+	; Booth's multiplication algorithm (2 bits)
+	; Multiplies rax and %1, result in rdx:rax
+	; A = rax
+	; S = -rax
+	; P = rdx:rax, where rax = %1
+	; WARNING: damages r10, %2
+	push r15
+	push r14
+	push rcx
+	push %1
+   
+	push rax
+	xor rdx, rdx
+	mov rax, %1    ; P
+	pop r15          ; A
+	mov r14, r15	   ; S
+	negative_64 r14, r10, %2
+	xor r10, r10
+	mov rcx, NUM_LEN
+
+	%%start_mul:
+		bt rax, 0
+		jc %%condition_1x
+		; condition_0x
+			test r10b, r10b
+			jz %%condition_00
+			jmp %%condition_01
+		%%condition_1x:
+			test r10b, r10b
+			jz %%condition_10
+
+		%%condition_11:
+			jmp %%condition_00
+		%%condition_10:
+			; P = P + S (rdx + S)
+			add_64 rdx, r14, %2
+			jmp %%condition_00
+		%%condition_01:
+			; P = P + A (rdx + A)
+			add_64 rdx, r15, %2
+		%%condition_00:
+			; shr (rdx:rax), 1
+			shrd rax, rdx, 1
+			setc r10b
+			sar rdx, 1
+	loop %%start_mul
+
+	pop %1
+	pop rcx
+	pop r14
+	pop r15
+%endmacro
+
+%macro div_64 1-2 r11
+	; Деление без восстановления остатков
+	; Divides rdx:rax by %1, quotient in rax, remainder in rdx
+	; A = rdx
+	; Q = rax
+	; M = %1
+	;-M = -%1
+	; WARNING: damages r10, %2
+	push r15
+	push r14
+	push r13
+	push rcx
+	push rbx
+
+	mov r15, %1           ; M
+	mov r14, r15  
+	negative_64 r14, r10, %2       ; -M
+	mov r13, 1            ; flag to choose between M and -M
+	mov rcx, NUM_LEN
+
+	; save signs of dividend and divider
+	xor bx, bx
+	bt r15, NUM_LEN - 1
+	jnc %%check_sign_of_dividend
+	; r15 is negative number
+		mov bl, 1
+		xchg r15, r14
+	%%check_sign_of_dividend:
+	bt rdx, NUM_LEN - 1
+	jnc %%start_division
+	; rdx:rax is negative number
+		mov bh, 1
+		test rax, rax
+		jz %%neg_rdx
+			not rdx
+			negative_64 rax, r10, %2
+			jmp %%start_division
+		%%neg_rdx:
+			negative_64 rdx, r10, %2
+
+	%%start_division:
+		shld rdx, rax, 1
+		shl rax, 1
+
+		test r13b, r13b
+		jnz %%add_minus_M
+			; add M
+			add_64 rdx, r15, %2
+			jmp %%sign_bit
+		%%add_minus_M:
+			add_64 rdx, r14, %2
+		%%sign_bit:
+			bt rdx, NUM_LEN - 1
+			setnc r13b
+			xor rax, r13
+	loop %%start_division
+
+	; restore remainder if needed
+	test r13b, r13b
+	jnz %%remainder_restored
+		add_64 rdx, r15, %2
+	%%remainder_restored:
+
+	; restore signs of answer if needed
+	; restore divider's sign
+	test bl, bl
+	jz %%restore_dividend_sign
+	; restore quotient
+		negative_64 rax, r10, %2
+	%%restore_dividend_sign:
+	test bh, bh
+	jz %%signs_restored
+		negative_64 rax, r10, %2
+		negative_64 rdx, r10, %2
+	%%signs_restored:
+
+	pop rbx
+	pop rcx
+	pop r13
+	pop r14
+	pop r15
+%endmacro

@@ -1,0 +1,17 @@
+%macro print_string 2
+	push rax
+	push rbx
+	push rcx
+	push rdx
+
+	mov	rcx, %1		; arg1, pointer to string
+ 	mov	rdx, %2		; arg2, length of string to print
+ 	mov	rbx, 1		; arg3, where to write, screen
+ 	mov	rax, 4		; write sysout command to int 80 hex
+ 	int	80h		; interrupt 80 hex, call kernel
+
+ 	pop rdx
+ 	pop rcx
+ 	pop rbx
+ 	pop rax
+%endmacro
